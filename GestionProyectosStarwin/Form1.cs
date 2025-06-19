@@ -1,6 +1,5 @@
 using GestionProyectosStarwin.Datos;
 using GestionProyectosStarwin.Modelos;
-using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using System.Data;
 
@@ -32,6 +31,9 @@ namespace GestionProyectosStarwin
             ConfigurarDataGridView();
             CargarEstadosComboBox();
             CargarProyectos();
+
+            // Conectar el evento de validación
+            dgvProyectos.CellValidating += dgvProyectos_CellValidating;
         }
 
         private void ConfigurarDataGridView()
@@ -44,7 +46,20 @@ namespace GestionProyectosStarwin
             dgvProyectos.Columns.Add(new DataGridViewTextBoxColumn { Name = "DescripcionProyecto", DataPropertyName = "DescripcionProyecto", HeaderText = "Descripción", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
             dgvProyectos.Columns.Add(new DataGridViewTextBoxColumn { Name = "PresupuestoTotal", DataPropertyName = "PresupuestoTotal", HeaderText = "Presupuesto", DefaultCellStyle = new DataGridViewCellStyle { Format = "C2" } });
             dgvProyectos.Columns.Add(new DataGridViewTextBoxColumn { Name = "FechaEntregaEstimada", DataPropertyName = "FechaEntregaEstimada", HeaderText = "Fecha Entrega", DefaultCellStyle = new DataGridViewCellStyle { Format = "d" } });
-            dgvProyectos.Columns.Add(new DataGridViewTextBoxColumn { Name = "Estado", DataPropertyName = "Estado", HeaderText = "Estado" });
+
+            // Columna de Estado como ComboBox
+            var columnaEstado = new DataGridViewComboBoxColumn
+            {
+                Name = "Estado",
+                DataPropertyName = "Estado",
+                HeaderText = "Estado",
+                FlatStyle = FlatStyle.Flat
+            };
+            columnaEstado.Items.Add("Cotizado");
+            columnaEstado.Items.Add("En Producción");
+            columnaEstado.Items.Add("Instalado");
+            columnaEstado.Items.Add("Pagado");
+            dgvProyectos.Columns.Add(columnaEstado);
         }
 
         private void CargarEstadosComboBox()
@@ -67,8 +82,8 @@ namespace GestionProyectosStarwin
         {
             var nuevoProyecto = new Proyecto
             {
-                NombreCliente = txtNombreCliente.Text,
-                DescripcionProyecto = txtDescripcion.Text,
+                NombreCliente = txtNombreCliente.Text.Trim(),
+                DescripcionProyecto = txtDescripcion.Text.Trim(),
                 PresupuestoTotal = numPresupuesto.Value,
                 FechaEntregaEstimada = dtpFechaEntrega.Value,
                 Estado = cmbEstado.SelectedItem?.ToString() ?? ""
@@ -97,7 +112,6 @@ namespace GestionProyectosStarwin
             {
                 MessageBox.Show($"Ocurrió un error al guardar el proyecto: {ex.Message}", "Error de Guardado", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-
         }
 
         private void LimpiarFormularioCreacion()
@@ -111,6 +125,12 @@ namespace GestionProyectosStarwin
 
         private void btnEliminar_Click(object sender, EventArgs e)
         {
+            if (string.IsNullOrWhiteSpace(txtIdEliminar.Text))
+            {
+                MessageBox.Show("Por favor, ingrese un ID para eliminar.", "ID Requerido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             if (!int.TryParse(txtIdEliminar.Text, out int idParaEliminar))
             {
                 MessageBox.Show("El ID ingresado no es un número válido.", "ID Inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -135,18 +155,53 @@ namespace GestionProyectosStarwin
             }
         }
 
+        private void dgvProyectos_CellValidating(object sender, DataGridViewCellValidatingEventArgs e)
+        {
+            string nombreColumna = dgvProyectos.Columns[e.ColumnIndex].Name;
+
+            if (dgvProyectos.Rows[e.RowIndex].IsNewRow) return;
+
+            if (nombreColumna.Equals("NombreCliente"))
+            {
+                if (string.IsNullOrWhiteSpace(e.FormattedValue.ToString()))
+                {
+                    MessageBox.Show("El nombre del cliente no puede estar vacío.", "Error de Validación", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    e.Cancel = true;
+                }
+            }
+            else if (nombreColumna.Equals("PresupuestoTotal"))
+            {
+                if (!decimal.TryParse(e.FormattedValue.ToString(), out decimal presupuesto) || presupuesto < 0)
+                {
+                    MessageBox.Show("Por favor, ingrese un valor numérico válido y positivo.", "Error de Validación", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    e.Cancel = true;
+                }
+            }
+            else if (nombreColumna.Equals("FechaEntregaEstimada"))
+            {
+                if (!DateTime.TryParse(e.FormattedValue.ToString(), out _))
+                {
+                    MessageBox.Show("Por favor, ingrese una fecha con formato válido.", "Error de Validación", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    e.Cancel = true;
+                }
+            }
+        }
+
         private void dgvProyectos_CellValueChanged(object sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0) return;
+
             var idProyecto = (int)dgvProyectos.Rows[e.RowIndex].Cells["Id"].Value;
+            var proyectoAActualizar = contexto.Proyectos.Find(idProyecto);
+
+            if (proyectoAActualizar == null) return;
 
             try
             {
-                var proyectoAActualizar = contexto.Proyectos.Find(idProyecto);
-                if (proyectoAActualizar == null) return;
                 object nuevoValor = dgvProyectos.Rows[e.RowIndex].Cells[e.ColumnIndex].Value;
                 var nombrePropiedad = dgvProyectos.Columns[e.ColumnIndex].DataPropertyName;
                 var propiedad = typeof(Proyecto).GetProperty(nombrePropiedad);
+
                 if (propiedad != null && propiedad.CanWrite)
                 {
                     var valorConvertido = Convert.ChangeType(nuevoValor, propiedad.PropertyType);
@@ -156,7 +211,7 @@ namespace GestionProyectosStarwin
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al actualizar el dato: {ex.Message}", "Error de Actualización", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Error al actualizar el dato: {ex.Message}\nLos cambios no se guardaron.", "Error de Actualización", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 CargarProyectos();
             }
         }
